@@ -14,11 +14,14 @@ import (
 )
 
 type zeit_config struct {
-	Zeit_User string `toml:"zeit_user"`
-	Zeit_Pwd  string `toml:"zeit_pwd"`
+	Zeit_User      string `toml:"zeit_user"`
+	Zeit_Pwd       string `toml:"zeit_pwd"`
+	Captcha_APIKey string `toml:"captcha_apikey"`
 }
 
 const ZEIT_SENDER_ADDRESS = "noreply@digitalabo.mailing.zeit.de"
+const ZEIT_DOWNLOAD_URL_BASE = "https://meine.zeit.de"
+const CAPTCHA_URL_KEY = "FCMHGOVVTDOLFCF6"
 
 func processZeitDownloadNotification(p *mail.Part, config zeit_config) bool {
 
@@ -47,7 +50,8 @@ func processZeitDownloadNotification(p *mail.Part, config zeit_config) bool {
 	indexEnd := strings.Index(mailContent, "\"")
 	downloadUrl := mailContent[0:indexEnd]
 
-	log.Println("found download link, starting download")
+	log.Println("found download link, starting download:")
+	log.Println(downloadUrl)
 	return downloadZeitEpub(defaultLibraryPath+"zeit_"+time.Now().Format("02-01-2006")+".epub", downloadUrl, config)
 }
 
@@ -65,7 +69,8 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 
 	log.Println("Getting login page for CSRF")
 
-	csrf_resp, err := client.Get("https://meine.zeit.de/anmelden")
+	loginpageUrl := ZEIT_DOWNLOAD_URL_BASE + "/anmelden"
+	csrf_resp, err := client.Get(loginpageUrl)
 	if err != nil {
 		log.Println("Error:", err)
 		return false
@@ -79,22 +84,46 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 	}
 	log.Println("Got csrf token " + csrf_token)
 
+	captcha_solution := solveCaptcha(config.Captcha_APIKey)
+	// decodedCaptcha, _ := url.QueryUnescape(captcha_solution) // Safely decode if needed
+	// captchaBase64 := base64.StdEncoding.EncodeToString([]byte(captcha_solution))
+
 	values := url.Values{}
 	values.Set("csrf_token", csrf_token)
+	values.Set("frc-captcha-response", captcha_solution)
+	values.Set("permanent", "on")
 	values.Set("pass", config.Zeit_Pwd)
 	values.Set("email", config.Zeit_User)
 
-	requestDir, err := http.NewRequest("POST", "https://meine.zeit.de/anmelden", strings.NewReader(values.Encode()))
+	values.Set("product_id", "sonstige")
+	values.Set("entry_service", "sonstige")
+	values.Set("return_url", "https://www.zeit.de/konto")
+
+	requestDir, err := http.NewRequest("POST", loginpageUrl, strings.NewReader(values.Encode()))
+	if err != nil {
+		log.Println("Error:", err)
+		return false
+	}
 
 	requestDir.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	// Backend NEEDS to have Origin set, otherwise error
-	requestDir.Header.Add("Origin", "https://meine.zeit.de")
+	requestDir.Header.Add("Origin", ZEIT_DOWNLOAD_URL_BASE)
 
 	log.Println("Logging in")
 
-	_, err = client.Do(requestDir)
+	resp, err := client.Do(requestDir)
 	if err != nil {
 		log.Println("Error:", err)
+		return false
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Println("Could not login: " + resp.Status)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		bodyString := string(bodyBytes)
+		log.Println(bodyString)
 		return false
 	}
 
@@ -109,7 +138,7 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 	defer out.Close()
 
 	// Get the data
-	resp, err := client.Get(address)
+	resp, err = client.Get(address)
 	if err != nil {
 		log.Println("Could not retrieve zeit epub file", err)
 		return false
@@ -130,4 +159,21 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 	}
 
 	return true
+}
+
+func solveCaptcha(apiKey string) string {
+	client := NewCaptchaClient(apiKey)
+	taskID, err := client.CreateTask(ZEIT_DOWNLOAD_URL_BASE+"/anmelden", CAPTCHA_URL_KEY)
+	if err != nil {
+		log.Println("Error creating task: ", err)
+		return ""
+	}
+
+	solutionToken, err := client.GetTaskResult(taskID)
+	if err != nil {
+		log.Println("Error getting task result: ", err)
+	}
+
+	log.Println("Solution Token: ", solutionToken)
+	return solutionToken
 }
