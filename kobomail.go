@@ -214,7 +214,9 @@ func deleteUDEVRulesFile() (ok bool) {
 }
 
 func checkCurrentExecutionType(exec_type string) (ok bool) {
-	if exec_type == "manual" {
+	if exec_type == "host" {
+		return true;
+	} else if exec_type == "manual" {
 		if _, err := os.Stat("/mnt/onboard/.adds/nm"); err == nil {
 			log.Println("Found NickelMenu")
 			if _, err := os.Stat("/mnt/onboard/.adds/nm/kobomail"); err == nil {
@@ -308,12 +310,18 @@ func containsFiletype(slice []string, item string) bool {
 }
 
 func main() {
-
+	
 	//let's block the log file
 	logFile, err := os.OpenFile(defaultPath+defaultLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Could not open kobo default logfile: ", err)
+		logFile, err = os.OpenFile("./kobomail.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			log.Println("Could not open fallback logfile: ", err)
+			log.Fatal(err)
+		}
 	}
+
 	//let's output to both stoud and log file
 	mw := io.MultiWriter(os.Stdout, logFile)
 	log.SetOutput(mw)
@@ -343,7 +351,11 @@ func main() {
 	log.Println("Reading config from: " + configPath)
 	var KM_Config KoboMailConfig
 	if _, err := toml.DecodeFile(configPath, &KM_Config); err != nil {
-		log.Fatal("Couldn't read config. Aborting! ", err)
+		log.Println("Couldn't read config. Aborting! ", err)
+		configPath = "./" + defaultConfigFile
+		if _, err := toml.DecodeFile(configPath, &KM_Config); err != nil {
+			log.Fatal("Couldn't read config. Aborting! ", err)
+		}
 	}
 
 	//let's check if the user configured Execution Type for KoboMail to be auto or manual
