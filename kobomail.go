@@ -23,7 +23,8 @@ const defaultPath = "/mnt/onboard/.adds/kobomail/"
 const defaultRootFSPath = "/usr/local/kobomail/"
 const defaultLogFile = "kobomail.log"
 const defaultConfigFile = "kobomail_cfg.toml"
-const defaultLibraryPath = "/mnt/onboard/KoboMailLibrary/"
+
+var defaultLibraryPath = "/mnt/onboard/KoboMailLibrary/"
 
 const defaultNickelMenuPath = "/mnt/onboard/.adds/nm"
 const defaultNickelMenuConfigTmpl = defaultRootFSPath + "kobomail_nm.tmpl"
@@ -215,7 +216,8 @@ func deleteUDEVRulesFile() (ok bool) {
 
 func checkCurrentExecutionType(exec_type string) (ok bool) {
 	if exec_type == "host" {
-		return true;
+		defaultLibraryPath = "."
+		return true
 	} else if exec_type == "manual" {
 		if _, err := os.Stat("/mnt/onboard/.adds/nm"); err == nil {
 			log.Println("Found NickelMenu")
@@ -261,7 +263,7 @@ func KoboMailExecutionType(exec_type string) (ok bool) {
 
 	if chkExecType := checkCurrentExecutionType(exec_type); chkExecType {
 		return true
-	} //else we'll sanitaze whatever needs to be taken care off
+	} //else we'll sanitize whatever needs to be taken care off
 
 	if exec_type == "manual" {
 		if _, err := os.Stat("/mnt/onboard/.adds/nm"); err == nil {
@@ -310,7 +312,7 @@ func containsFiletype(slice []string, item string) bool {
 }
 
 func main() {
-	
+
 	//let's block the log file
 	logFile, err := os.OpenFile(defaultPath+defaultLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {

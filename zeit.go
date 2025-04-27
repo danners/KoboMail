@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
 
 	"github.com/emersion/go-message/mail"
 )
@@ -20,8 +23,7 @@ type zeit_config struct {
 }
 
 const ZEIT_SENDER_ADDRESS = "noreply@digitalabo.mailing.zeit.de"
-const ZEIT_DOWNLOAD_URL_BASE = "https://meine.zeit.de"
-const CAPTCHA_URL_KEY = "FCMHGOVVTDOLFCF6"
+const CAPTCHA_URL_KEY = "FCMHGOVVTEVINKPD"
 
 func processZeitDownloadNotification(p *mail.Part, config zeit_config) bool {
 
@@ -67,51 +69,42 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 		Jar: jar,
 	}
 
-	log.Println("Getting login page for CSRF")
+	log.Println("Getting login page")
 
-	loginpageUrl := ZEIT_DOWNLOAD_URL_BASE + "/anmelden"
-	csrf_resp, err := client.Get(loginpageUrl)
+	loginpageUrl := "https://meine.zeit.de/anmelden"
+	loginpage_resp, err := client.Get(loginpageUrl)
 	if err != nil {
 		log.Println("Error:", err)
 		return false
 	}
 
-	csrf_token := ""
-	for _, c := range csrf_resp.Cookies() {
-		if strings.Compare(c.Name, "csrf_token") == 0 {
-			csrf_token = c.Value
-		}
-	}
-	log.Println("Got csrf token " + csrf_token)
+	finalURLAfterRedirects := loginpage_resp.Request.URL.String()
+	log.Println("Final URL:", finalURLAfterRedirects)
+	captcha_solution := solveCaptcha(config.Captcha_APIKey, finalURLAfterRedirects)
 
-	captcha_solution := solveCaptcha(config.Captcha_APIKey)
-	// decodedCaptcha, _ := url.QueryUnescape(captcha_solution) // Safely decode if needed
-	// captchaBase64 := base64.StdEncoding.EncodeToString([]byte(captcha_solution))
+	login_url, err := extractLoginUrl(loginpage_resp.Body)
+	if err != nil {
+		log.Println("Error parsing form action url: ", err)
+		return false
+	}
+	log.Println("Login URL:", login_url)
 
 	values := url.Values{}
-	values.Set("csrf_token", csrf_token)
 	values.Set("frc-captcha-response", captcha_solution)
-	values.Set("permanent", "on")
-	values.Set("pass", config.Zeit_Pwd)
-	values.Set("email", config.Zeit_User)
+	values.Set("password", config.Zeit_Pwd)
+	values.Set("username", config.Zeit_User)
 
-	values.Set("product_id", "sonstige")
-	values.Set("entry_service", "sonstige")
-	values.Set("return_url", "https://www.zeit.de/konto")
-
-	requestDir, err := http.NewRequest("POST", loginpageUrl, strings.NewReader(values.Encode()))
+	loginRequest, err := http.NewRequest("POST", login_url, strings.NewReader(values.Encode()))
 	if err != nil {
 		log.Println("Error:", err)
 		return false
 	}
 
-	requestDir.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	// Backend NEEDS to have Origin set, otherwise error
-	requestDir.Header.Add("Origin", ZEIT_DOWNLOAD_URL_BASE)
+	loginRequest.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	log.Println("Logging in")
 
-	resp, err := client.Do(requestDir)
+	resp, err := client.Do(loginRequest)
 	if err != nil {
 		log.Println("Error:", err)
 		return false
@@ -161,9 +154,9 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 	return true
 }
 
-func solveCaptcha(apiKey string) string {
+func solveCaptcha(apiKey string, url string) string {
 	client := NewCaptchaClient(apiKey)
-	taskID, err := client.CreateTask(ZEIT_DOWNLOAD_URL_BASE+"/anmelden", CAPTCHA_URL_KEY)
+	taskID, err := client.CreateTask(url, CAPTCHA_URL_KEY)
 	if err != nil {
 		log.Println("Error creating task: ", err)
 		return ""
@@ -176,4 +169,41 @@ func solveCaptcha(apiKey string) string {
 
 	log.Println("Solution Token: ", solutionToken)
 	return solutionToken
+}
+
+func extractLoginUrl(body io.Reader) (string, error) {
+	doc, err := html.Parse(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var actionURL string
+	var findForm func(*html.Node)
+	findForm = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "form" {
+			for _, attr := range n.Attr {
+				if attr.Key == "id" && attr.Val == "kc-form-login" {
+					for _, a := range n.Attr {
+						if a.Key == "action" {
+							actionURL = a.Val
+							return
+						}
+					}
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			findForm(c)
+		}
+	}
+
+	findForm(doc)
+
+	if actionURL == "" {
+		return "", fmt.Errorf("login form not found")
+	}
+
+	// html entity decoding (e.g., &amp;)
+	actionURL = html.UnescapeString(actionURL)
+	return actionURL, nil
 }
