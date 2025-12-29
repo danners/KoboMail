@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"log"
@@ -11,6 +12,7 @@ import (
 
 type CaptchaClient struct {
 	APIKey string
+	Client *http.Client
 }
 
 type createTaskResponse struct {
@@ -26,8 +28,15 @@ type taskResultResponse struct {
 	} `json:"solution"`
 }
 
-func NewCaptchaClient(apiKey string) *CaptchaClient {
-	return &CaptchaClient{APIKey: apiKey}
+func NewCaptchaClient(apiKey string, skipSSL bool) *CaptchaClient {
+	return &CaptchaClient{
+		APIKey: apiKey,
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: skipSSL},
+			},
+		},
+	}
 }
 
 func (c *CaptchaClient) CreateTask(websiteURL, websiteKey string) (int64, error) {
@@ -41,7 +50,7 @@ func (c *CaptchaClient) CreateTask(websiteURL, websiteKey string) (int64, error)
 		},
 	})
 
-	resp, err := http.Post("https://api.2captcha.com/createTask", "application/json", bytes.NewBuffer(requestBody))
+	resp, err := c.Client.Post("https://api.2captcha.com/createTask", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		return 0, err
 	}
@@ -66,7 +75,7 @@ func (c *CaptchaClient) GetTaskResult(taskId int64) (string, error) {
 	})
 
 	for {
-		resp, err := http.Post("https://api.2captcha.com/getTaskResult", "application/json", bytes.NewBuffer(requestBody))
+		resp, err := c.Client.Post("https://api.2captcha.com/getTaskResult", "application/json", bytes.NewBuffer(requestBody))
 		if err != nil {
 			return "", err
 		}

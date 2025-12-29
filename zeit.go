@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -25,7 +26,7 @@ type zeit_config struct {
 const ZEIT_SENDER_ADDRESS = "noreply@digitalabo.mailing.zeit.de"
 const CAPTCHA_URL_KEY = "FCMHGOVVTEVINKPD"
 
-func processZeitDownloadNotification(p *mail.Part, config zeit_config) bool {
+func processZeitDownloadNotification(p *mail.Part, config KoboMailConfig) bool {
 
 	log.Println("Found email sent by Zeit")
 
@@ -54,10 +55,10 @@ func processZeitDownloadNotification(p *mail.Part, config zeit_config) bool {
 
 	log.Println("found download link, starting download:")
 	log.Println(downloadUrl)
-	return downloadZeitEpub(defaultLibraryPath+"zeit_"+time.Now().Format("02-01-2006")+".epub", downloadUrl, config)
+	return downloadZeitEpub(defaultLibraryPath+"zeit_"+time.Now().Format("02-01-2006")+".epub", downloadUrl, config.Zeit_Config, config.Skip_SSL_Verification)
 }
 
-func downloadZeitEpub(filepath string, address string, config zeit_config) bool {
+func downloadZeitEpub(filepath string, address string, config zeit_config, skipSSL bool) bool {
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -67,8 +68,10 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 
 	client := &http.Client{
 		Jar: jar,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: skipSSL},
+		},
 	}
-
 	log.Println("Getting login page")
 
 	loginpageUrl := "https://meine.zeit.de/anmelden"
@@ -80,7 +83,7 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 
 	finalURLAfterRedirects := loginpage_resp.Request.URL.String()
 	log.Println("Final URL:", finalURLAfterRedirects)
-	captcha_solution := solveCaptcha(config.Captcha_APIKey, finalURLAfterRedirects)
+	captcha_solution := solveCaptcha(config.Captcha_APIKey, finalURLAfterRedirects, skipSSL)
 
 	login_url, err := extractLoginUrl(loginpage_resp.Body)
 	if err != nil {
@@ -130,6 +133,8 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 	}
 	defer out.Close()
 
+	log.Println("Created file:", filepath)
+
 	// Get the data
 	resp, err = client.Get(address)
 	if err != nil {
@@ -150,12 +155,13 @@ func downloadZeitEpub(filepath string, address string, config zeit_config) bool 
 		log.Println("Could not write to file")
 		return false
 	}
+	log.Println("written to file:", filepath)
 
 	return true
 }
 
-func solveCaptcha(apiKey string, url string) string {
-	client := NewCaptchaClient(apiKey)
+func solveCaptcha(apiKey string, url string, skipSSL bool) string {
+	client := NewCaptchaClient(apiKey, skipSSL)
 	taskID, err := client.CreateTask(url, CAPTCHA_URL_KEY)
 	if err != nil {
 		log.Println("Error creating task: ", err)

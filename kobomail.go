@@ -43,10 +43,11 @@ const binQndb = "/usr/bin/qndb"
 
 // config struct
 type KoboMailConfig struct {
-	IMAP_Config       imap_config
-	Execution_Type    execution_type
-	Processing_Config processing_config
-	Zeit_Config       zeit_config
+	IMAP_Config           imap_config
+	Execution_Type        execution_type
+	Processing_Config     processing_config
+	Zeit_Config           zeit_config
+	Skip_SSL_Verification bool `toml:"skip_ssl_verification"`
 }
 
 type imap_config struct {
@@ -372,6 +373,7 @@ func main() {
 		tlsc.ServerName = tlsn
 	}
 
+	tlsc.InsecureSkipVerify = KM_Config.Skip_SSL_Verification
 	//we'll try to login, if not we most likely have a faulty internet connection or an invalid imap host
 	num_retries := 3
 	c, err := client.DialTLS(connStr, tlsc)
@@ -548,7 +550,7 @@ func main() {
 					}
 					if addr != nil {
 						if addr[0].Address == ZEIT_SENDER_ADDRESS {
-							if processZeitDownloadNotification(p, KM_Config.Zeit_Config) {
+							if processZeitDownloadNotification(p, KM_Config) {
 								number_ebooks_processed += 1
 							}
 						} else {
